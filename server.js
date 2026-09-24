@@ -17,6 +17,7 @@ const MIME = {'.html':'text/html; charset=utf-8','.js':'text/javascript; charset
 const JSON_HEADERS = {'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'};
 const teacherSessions = new Set();
 const loginAttempts = new Map();
+const roomBookings = [];
 function json(res,status,data){res.writeHead(status,JSON_HEADERS);res.end(JSON.stringify(data))}
 async function body(req){let chunks=[],total=0;for await(const chunk of req){total+=chunk.length;if(total>24000)throw new Error('Слишком длинный запрос');chunks.push(chunk)}return JSON.parse(Buffer.concat(chunks).toString('utf8'))}
 function studyFallback({mode,message}){
@@ -87,6 +88,13 @@ const server=http.createServer(async(req,res)=>{
       if(token)teacherSessions.delete(token);
       res.writeHead(200,{...JSON_HEADERS,'Set-Cookie':'nis_teacher=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0'});
       return res.end(JSON.stringify({teacher:false}));
+    }
+    if(req.method==='GET'&&url.pathname==='/api/bookings')return json(res,200,{bookings:roomBookings});
+    if(req.method==='POST'&&url.pathname==='/api/bookings'){
+      const data=await body(req);
+      if(!data.room||!data.time||!data.purpose)return json(res,400,{error:'Заполните все поля бронирования.'});
+      if(roomBookings.some(x=>x.room===data.room&&x.time===data.time))return json(res,409,{error:'Этот кабинет уже забронирован на выбранное время.'});
+      const booking={id:crypto.randomUUID(),room:data.room,time:data.time,purpose:data.purpose,teacher:'Учитель НИС'};roomBookings.push(booking);return json(res,201,{booking});
     }
     if(req.method==='POST'&&url.pathname==='/api/chat'){
       const data=await body(req);

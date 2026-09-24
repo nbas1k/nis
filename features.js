@@ -247,4 +247,3 @@ document.addEventListener('submit', async event => {
 }, true);
 
 render();
-if (state.role === 'teacher') fetch('/api/teacher/status').then(r => r.json()).then(data => { if (!data.teacher) { state.role = 'student'; save(); render(); } }).catch(() => { state.role = 'student'; save(); render(); });
