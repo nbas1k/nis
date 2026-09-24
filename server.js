@@ -6,9 +6,9 @@ const { URL } = require('node:url');
 
 try { process.loadEnvFile(path.join(__dirname, '.env')); } catch (error) { if (error.code !== 'ENOENT') console.error('Не удалось прочитать .env:', error.message); }
 
-const HOST = '127.0.0.1';
+const HOST = process.env.HOST || '0.0.0.0';
 const PORT = Number(process.env.PORT || 4174);
-const MODEL = process.env.GEMINI_MODEL || 'gemini-3.6-flash';
+const MODEL = process.env.OPENAI_MODEL || 'gpt-4o-mini';
 const ROOT = __dirname;
 const MIME = {'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.jpeg':'image/jpeg','.png':'image/png','.svg':'image/svg+xml'};
 const JSON_HEADERS = {'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'};
@@ -17,27 +17,26 @@ const loginAttempts = new Map();
 function json(res,status,data){res.writeHead(status,JSON_HEADERS);res.end(JSON.stringify(data))}
 async function body(req){let chunks=[],total=0;for await(const chunk of req){total+=chunk.length;if(total>24000)throw new Error('Слишком длинный запрос');chunks.push(chunk)}return JSON.parse(Buffer.concat(chunks).toString('utf8'))}
 async function gemini({mode,message,history=[]}){
-  const key=process.env.GEMINI_API_KEY;
-  if(!key)throw Object.assign(new Error('Добавьте GEMINI_API_KEY в файл .env и перезапустите сервер.'),{status:503});
+  const key=process.env.OPENAI_API_KEY;
+  if(!key)throw Object.assign(new Error('Добавьте OPENAI_API_KEY в переменные окружения Render.'),{status:503});
   const prompt=mode==='support'
     ? 'Ты доброжелательный помощник школьника НИШ. Отвечай по-русски кратко и бережно, помогай снизить учебный стресс с помощью дыхания, планирования и отдыха. Не выдавай себя за психолога и не ставь диагноз. При признаках опасности для себя или других мягко предложи сразу обратиться к доверенному взрослому или экстренной помощи.'
     : 'Ты академический тьютор для ученика 8 класса НИШ. Отвечай по-русски ясно и кратко, объясняй шагами, задавай вопросы для самопроверки. Известные демо-данные: СОР по биологии «Молекулярная биология и биохимия» 24.09.2026 — 15 из 20. Математика: модульная арифметика, теория чисел. Не придумывай личные оценки или расписание сверх этих данных.';
-  const contents=history.slice(-8).filter(x=>x&&['user','model'].includes(x.role)&&typeof x.text==='string').map(x=>({role:x.role,parts:[{text:x.text.slice(0,3000)}]}));
-  contents.push({role:'user',parts:[{text:message.slice(0,4000)}]});
-  const upstream=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(MODEL)}:generateContent`,{method:'POST',headers:{'Content-Type':'application/json','x-goog-api-key':key},body:JSON.stringify({systemInstruction:{parts:[{text:prompt}]},contents,generationConfig:{maxOutputTokens:800,temperature:0.65}}),signal:AbortSignal.timeout(90000)});
+  const messages=[{role:'system',content:prompt},...history.slice(-8).filter(x=>x&&['user','assistant','model'].includes(x.role)&&typeof x.text==='string').map(x=>({role:x.role==='model'?'assistant':x.role,content:x.text.slice(0,3000)})),{role:'user',content:message.slice(0,4000)}];
+  const upstream=await fetch('https://api.openai.com/v1/chat/completions',{method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${key}`},body:JSON.stringify({model:MODEL,messages,max_tokens:800,temperature:0.65}),signal:AbortSignal.timeout(90000)});
   const result=await upstream.json();
   if(!upstream.ok){
     const message=upstream.status===503?'Gemini сейчас перегружен. Повторите запрос через минуту.':upstream.status===429?'Лимит запросов Gemini исчерпан. Попробуйте позже.':result.error?.message||`Gemini API: HTTP ${upstream.status}`;
     throw Object.assign(new Error(message),{status:upstream.status===429?429:upstream.status===503?503:502});
   }
-  const answer=result.candidates?.[0]?.content?.parts?.map(x=>x.text||'').join('').trim();
+  const answer=result.choices?.[0]?.message?.content?.trim();
   if(!answer)throw Object.assign(new Error('Gemini не вернул текстовый ответ. Попробуйте ещё раз.'),{status:502});
   return answer;
 }
 const server=http.createServer(async(req,res)=>{
   try{
     const url=new URL(req.url,`http://${HOST}:${PORT}`);
-    if(req.method==='GET'&&url.pathname==='/api/status')return json(res,200,{configured:Boolean(process.env.GEMINI_API_KEY),model:MODEL});
+    if(req.method==='GET'&&url.pathname==='/api/status')return json(res,200,{configured:Boolean(process.env.OPENAI_API_KEY),model:MODEL,provider:'openai'});
     if(req.method==='GET'&&url.pathname==='/api/teacher/status'){
       const token=/nis_teacher=([a-f0-9]+)/.exec(req.headers.cookie||'')?.[1];
       return json(res,200,{teacher:Boolean(token&&teacherSessions.has(token))});
