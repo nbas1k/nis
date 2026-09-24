@@ -35,8 +35,8 @@ async function openai({mode,message,history=[]}){
   const result=await upstream.json();
   if(!upstream.ok){
     if(upstream.status===429)return studyFallback({mode,message});
-    const message=upstream.status===503?'OpenAI сейчас перегружен. Повторите запрос через минуту.':upstream.status===429?'Для ключа OpenAI нет доступной квоты. Проверьте Billing и лимиты в OpenAI Platform.':result.error?.message||`OpenAI API: HTTP ${upstream.status}`;
-    throw Object.assign(new Error(message),{status:upstream.status===429?429:upstream.status===503?503:502});
+    const apiMessage=upstream.status===503?'OpenAI сейчас перегружен. Повторите запрос через минуту.':upstream.status===429?'Для ключа OpenAI нет доступной квоты. Проверьте Billing и лимиты в OpenAI Platform.':result.error?.message||`OpenAI API: HTTP ${upstream.status}`;
+    throw Object.assign(new Error(apiMessage),{status:upstream.status===429?429:upstream.status===503?503:502});
   }
   const answer=result.choices?.[0]?.message?.content?.trim();
   if(!answer)throw Object.assign(new Error('OpenAI не вернул текстовый ответ. Попробуйте ещё раз.'),{status:502});
