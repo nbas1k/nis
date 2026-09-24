@@ -16,6 +16,14 @@ const teacherSessions = new Set();
 const loginAttempts = new Map();
 function json(res,status,data){res.writeHead(status,JSON_HEADERS);res.end(JSON.stringify(data))}
 async function body(req){let chunks=[],total=0;for await(const chunk of req){total+=chunk.length;if(total>24000)throw new Error('Слишком длинный запрос');chunks.push(chunk)}return JSON.parse(Buffer.concat(chunks).toString('utf8'))}
+function studyFallback({mode,message}){
+  const text=message.toLowerCase();
+  if(mode==='support')return '⚡ Учебный помощник работает в демо-режиме. Сделай паузу на 2 минуты: выпрями спину, сделай 4 медленных вдоха и выдоха, затем выбери одну маленькую задачу на ближайшие 25 минут. Ты справишься.';
+  if(/биолог|биохим|молекул/.test(text))return '⚡ Демо-режим тьютора. Для СОР по молекулярной биологии повтори: строение ДНК и РНК, репликацию, роль белков и ферментов. Реши 3 задания: сравни ДНК и РНК, объясни комплементарность, назови этапы синтеза белка.';
+  if(/матем|алгебр|модул|задач/.test(text))return '⚡ Демо-режим тьютора. Начни с условия и выпиши, что известно. Для модульной арифметики проверь остатки при делении и используй запись a ≡ b (mod n). Пришли конкретную задачу или фото условия — разберём по шагам.';
+  if(/хими|реакц|оксид/.test(text))return '⚡ Демо-режим тьютора. Чтобы уравнять реакцию: 1) запиши формулы веществ; 2) посчитай атомы каждого элемента; 3) подбери коэффициенты; 4) перепроверь обе части. Начни с металла или сложного вещества, а кислород обычно оставь напоследок.';
+  return '⚡ Учебный помощник работает в демо-режиме. Я могу помочь подготовить план к СОР, повторить тему по биологии, решить задачу по математике или уравнять реакцию по химии. Напиши предмет и конкретное задание.';
+}
 async function openai({mode,message,history=[]}){
   const key=process.env.OPENAI_API_KEY;
   if(!key)throw Object.assign(new Error('Добавьте OPENAI_API_KEY в переменные окружения Render.'),{status:503});
@@ -26,6 +34,7 @@ async function openai({mode,message,history=[]}){
   const upstream=await fetch('https://api.openai.com/v1/chat/completions',{method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${key}`},body:JSON.stringify({model:MODEL,messages,max_tokens:800,temperature:0.65}),signal:AbortSignal.timeout(90000)});
   const result=await upstream.json();
   if(!upstream.ok){
+    if(upstream.status===429)return studyFallback({mode,message});
     const message=upstream.status===503?'OpenAI сейчас перегружен. Повторите запрос через минуту.':upstream.status===429?'Для ключа OpenAI нет доступной квоты. Проверьте Billing и лимиты в OpenAI Platform.':result.error?.message||`OpenAI API: HTTP ${upstream.status}`;
     throw Object.assign(new Error(message),{status:upstream.status===429?429:upstream.status===503?503:502});
   }
