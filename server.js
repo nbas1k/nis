@@ -16,7 +16,7 @@ const teacherSessions = new Set();
 const loginAttempts = new Map();
 function json(res,status,data){res.writeHead(status,JSON_HEADERS);res.end(JSON.stringify(data))}
 async function body(req){let chunks=[],total=0;for await(const chunk of req){total+=chunk.length;if(total>24000)throw new Error('Слишком длинный запрос');chunks.push(chunk)}return JSON.parse(Buffer.concat(chunks).toString('utf8'))}
-async function gemini({mode,message,history=[]}){
+async function openai({mode,message,history=[]}){
   const key=process.env.OPENAI_API_KEY;
   if(!key)throw Object.assign(new Error('Добавьте OPENAI_API_KEY в переменные окружения Render.'),{status:503});
   const prompt=mode==='support'
@@ -26,11 +26,11 @@ async function gemini({mode,message,history=[]}){
   const upstream=await fetch('https://api.openai.com/v1/chat/completions',{method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${key}`},body:JSON.stringify({model:MODEL,messages,max_tokens:800,temperature:0.65}),signal:AbortSignal.timeout(90000)});
   const result=await upstream.json();
   if(!upstream.ok){
-    const message=upstream.status===503?'Gemini сейчас перегружен. Повторите запрос через минуту.':upstream.status===429?'Лимит запросов Gemini исчерпан. Попробуйте позже.':result.error?.message||`Gemini API: HTTP ${upstream.status}`;
+    const message=upstream.status===503?'OpenAI сейчас перегружен. Повторите запрос через минуту.':upstream.status===429?'Для ключа OpenAI нет доступной квоты. Проверьте Billing и лимиты в OpenAI Platform.':result.error?.message||`OpenAI API: HTTP ${upstream.status}`;
     throw Object.assign(new Error(message),{status:upstream.status===429?429:upstream.status===503?503:502});
   }
   const answer=result.choices?.[0]?.message?.content?.trim();
-  if(!answer)throw Object.assign(new Error('Gemini не вернул текстовый ответ. Попробуйте ещё раз.'),{status:502});
+  if(!answer)throw Object.assign(new Error('OpenAI не вернул текстовый ответ. Попробуйте ещё раз.'),{status:502});
   return answer;
 }
 const server=http.createServer(async(req,res)=>{
@@ -66,7 +66,7 @@ const server=http.createServer(async(req,res)=>{
       const data=await body(req);
       if(typeof data.message!=='string'||!data.message.trim()||data.message.length>4000)return json(res,400,{error:'Сообщение должно содержать от 1 до 4000 символов.'});
       if(!['academic','support'].includes(data.mode))return json(res,400,{error:'Неизвестный режим.'});
-      return json(res,200,{answer:await gemini(data)});
+      return json(res,200,{answer:await openai(data)});
     }
     if(req.method!=='GET'&&req.method!=='HEAD')return json(res,405,{error:'Метод не поддерживается'});
     const file=url.pathname==='/'?'index.html':decodeURIComponent(url.pathname).replace(/^\/+/, '');
