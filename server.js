@@ -9,6 +9,8 @@ try { process.loadEnvFile(path.join(__dirname, '.env')); } catch (error) { if (e
 const HOST = process.env.HOST || '0.0.0.0';
 const PORT = Number(process.env.PORT || 4174);
 const MODEL = process.env.OPENAI_MODEL || 'gpt-4o-mini';
+const AI_BASE_URL = (process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1').replace(/\/$/, '');
+const AI_PROVIDER = AI_BASE_URL.includes('teamorouter.com') ? 'teamorouter' : 'openai';
 const ROOT = __dirname;
 const MIME = {'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.jpeg':'image/jpeg','.png':'image/png','.svg':'image/svg+xml'};
 const JSON_HEADERS = {'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'};
@@ -31,7 +33,7 @@ async function openai({mode,message,history=[]}){
     ? 'Ты доброжелательный помощник школьника НИШ. Отвечай по-русски кратко и бережно, помогай снизить учебный стресс с помощью дыхания, планирования и отдыха. Не выдавай себя за психолога и не ставь диагноз. При признаках опасности для себя или других мягко предложи сразу обратиться к доверенному взрослому или экстренной помощи.'
     : 'Ты академический тьютор для ученика 8 класса НИШ. Отвечай по-русски ясно и кратко, объясняй шагами, задавай вопросы для самопроверки. Известные демо-данные: СОР по биологии «Молекулярная биология и биохимия» 24.09.2026 — 15 из 20. Математика: модульная арифметика, теория чисел. Не придумывай личные оценки или расписание сверх этих данных.';
   const messages=[{role:'system',content:prompt},...history.slice(-8).filter(x=>x&&['user','assistant','model'].includes(x.role)&&typeof x.text==='string').map(x=>({role:x.role==='model'?'assistant':x.role,content:x.text.slice(0,3000)})),{role:'user',content:message.slice(0,4000)}];
-  const upstream=await fetch('https://api.openai.com/v1/chat/completions',{method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${key}`},body:JSON.stringify({model:MODEL,messages,max_tokens:800,temperature:0.65}),signal:AbortSignal.timeout(90000)});
+  const upstream=await fetch(`${AI_BASE_URL}/chat/completions`,{method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${key}`},body:JSON.stringify({model:MODEL,messages,max_tokens:800,temperature:0.65}),signal:AbortSignal.timeout(90000)});
   const result=await upstream.json();
   if(!upstream.ok){
     if(upstream.status===429)return studyFallback({mode,message});
@@ -45,7 +47,7 @@ async function openai({mode,message,history=[]}){
 const server=http.createServer(async(req,res)=>{
   try{
     const url=new URL(req.url,`http://${HOST}:${PORT}`);
-    if(req.method==='GET'&&url.pathname==='/api/status')return json(res,200,{configured:Boolean(process.env.OPENAI_API_KEY),model:MODEL,provider:'openai'});
+    if(req.method==='GET'&&url.pathname==='/api/status')return json(res,200,{configured:Boolean(process.env.OPENAI_API_KEY),model:MODEL,provider:AI_PROVIDER});
     if(req.method==='GET'&&url.pathname==='/api/teacher/status'){
       const token=/nis_teacher=([a-f0-9]+)/.exec(req.headers.cookie||'')?.[1];
       return json(res,200,{teacher:Boolean(token&&teacherSessions.has(token))});
