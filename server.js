@@ -10,7 +10,8 @@ const HOST = process.env.HOST || '0.0.0.0';
 const PORT = Number(process.env.PORT || 4174);
 const MODEL = process.env.OPENAI_MODEL || 'gpt-4o-mini';
 const AI_BASE_URL = (process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1').replace(/\/$/, '');
-const AI_PROVIDER = AI_BASE_URL.includes('teamorouter.com') ? 'teamorouter' : 'openai';
+const AI_PROVIDER = process.env.AI_PROVIDER || (AI_BASE_URL.includes('teamorouter.com') ? 'teamorouter' : 'openai');
+const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.6-flash';
 const ROOT = __dirname;
 const MIME = {'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.jpeg':'image/jpeg','.png':'image/png','.svg':'image/svg+xml'};
 const JSON_HEADERS = {'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'};
@@ -25,6 +26,20 @@ function studyFallback({mode,message}){
   if(/матем|алгебр|модул|задач/.test(text))return '⚡ Демо-режим тьютора. Начни с условия и выпиши, что известно. Для модульной арифметики проверь остатки при делении и используй запись a ≡ b (mod n). Пришли конкретную задачу или фото условия — разберём по шагам.';
   if(/хими|реакц|оксид/.test(text))return '⚡ Демо-режим тьютора. Чтобы уравнять реакцию: 1) запиши формулы веществ; 2) посчитай атомы каждого элемента; 3) подбери коэффициенты; 4) перепроверь обе части. Начни с металла или сложного вещества, а кислород обычно оставь напоследок.';
   return '⚡ Учебный помощник работает в демо-режиме. Я могу помочь подготовить план к СОР, повторить тему по биологии, решить задачу по математике или уравнять реакцию по химии. Напиши предмет и конкретное задание.';
+}
+async function gemini({mode,message,history=[]}){
+  const key=process.env.GEMINI_API_KEY;
+  if(!key)throw Object.assign(new Error('Добавьте GEMINI_API_KEY в переменные окружения Render.'),{status:503});
+  const instruction=mode==='support'
+    ? 'Ты доброжелательный помощник школьника НИШ. Отвечай по-русски кратко и бережно, помогай снизить учебный стресс с помощью дыхания, планирования и отдыха. Не ставь диагнозы. При признаках опасности мягко предложи обратиться к доверенному взрослому или экстренной помощи.'
+    : 'Ты академический тьютор для ученика 8 класса НИШ. Отвечай по-русски ясно и кратко, объясняй шагами. Демо-данные: СОР по биологии «Молекулярная биология и биохимия» 24.09.2026 — 15 из 20. Математика: модульная арифметика и теория чисел.';
+  const contents=[...history.slice(-8).filter(x=>x&&['user','assistant','model'].includes(x.role)&&typeof x.text==='string').map(x=>({role:x.role==='user'?'user':'model',parts:[{text:x.text.slice(0,3000)}]})),{role:'user',parts:[{text:message.slice(0,4000)}]}];
+  const upstream=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${encodeURIComponent(key)}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({systemInstruction:{parts:[{text:instruction}]},contents,generationConfig:{maxOutputTokens:800,temperature:0.65}}),signal:AbortSignal.timeout(90000)});
+  const result=await upstream.json();
+  if(!upstream.ok)throw Object.assign(new Error(result.error?.message||`Gemini API: HTTP ${upstream.status}`),{status:upstream.status===429?429:502});
+  const answer=result.candidates?.[0]?.content?.parts?.map(part=>part.text||'').join('').trim();
+  if(!answer)throw Object.assign(new Error('Gemini не вернул текстовый ответ. Попробуйте ещё раз.'),{status:502});
+  return answer;
 }
 async function openai({mode,message,history=[]}){
   const key=process.env.OPENAI_API_KEY;
@@ -47,7 +62,7 @@ async function openai({mode,message,history=[]}){
 const server=http.createServer(async(req,res)=>{
   try{
     const url=new URL(req.url,`http://${HOST}:${PORT}`);
-    if(req.method==='GET'&&url.pathname==='/api/status')return json(res,200,{configured:Boolean(process.env.OPENAI_API_KEY),model:MODEL,provider:AI_PROVIDER});
+    if(req.method==='GET'&&url.pathname==='/api/status')return json(res,200,{configured:AI_PROVIDER==='gemini'?Boolean(process.env.GEMINI_API_KEY):Boolean(process.env.OPENAI_API_KEY),model:AI_PROVIDER==='gemini'?GEMINI_MODEL:MODEL,provider:AI_PROVIDER});
     if(req.method==='GET'&&url.pathname==='/api/teacher/status'){
       const token=/nis_teacher=([a-f0-9]+)/.exec(req.headers.cookie||'')?.[1];
       return json(res,200,{teacher:Boolean(token&&teacherSessions.has(token))});
@@ -77,7 +92,7 @@ const server=http.createServer(async(req,res)=>{
       const data=await body(req);
       if(typeof data.message!=='string'||!data.message.trim()||data.message.length>4000)return json(res,400,{error:'Сообщение должно содержать от 1 до 4000 символов.'});
       if(!['academic','support'].includes(data.mode))return json(res,400,{error:'Неизвестный режим.'});
-      return json(res,200,{answer:await openai(data)});
+      return json(res,200,{answer:await (AI_PROVIDER==='gemini'?gemini(data):openai(data))});
     }
     if(req.method!=='GET'&&req.method!=='HEAD')return json(res,405,{error:'Метод не поддерживается'});
     const file=url.pathname==='/'?'index.html':decodeURIComponent(url.pathname).replace(/^\/+/, '');
